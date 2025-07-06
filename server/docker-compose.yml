@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: chat-server
+    ports:
+      - '3000:3000'
+    depends_on:
+      - database
+    environment:
+      MONGODB_URI: mongodb://root:rootpassword@database:27017/chatapp?authSource=admin&retryWrites=true&w=majority
+      PORT: 3000
+      JWT_SECRET: YWpka2ZhamtmamRrYUAhIyFAIyFAI0AhNDMyNDIzNDIhJEAjamFrZmhkYWpmaGFqZGgzNDg5NDgwMzQ4MjMkISQjISRmCg==
+    volumes:
+      - .:/app
+    command: pnpm run start
+    restart: always
+    networks:
+      - chatnet
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:3000/api/health']
+      interval: 30s
+      timeout: 10s
+      start_period: 5s
+      retries: 3
+
+  database:
+    image: mongo:latest
+    container_name: mongo-server
+    restart: always
+    ports:
+      - '27017:27017'
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: rootpassword
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - chatnet
+    healthcheck:
+      test: ['CMD', 'mongosh', '--quiet', '--eval', "db.runCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+volumes:
+  mongo_data:
+
+networks:
+  chatnet:
+    external: true
+    driver: bridge

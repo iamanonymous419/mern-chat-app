@@ -1,0 +1,186 @@
+version: 2.1
+
+# -------------------------
+# Define the Docker-based executor for most jobs
+# -------------------------
+executors:
+  docker-executor:
+    machine:
+      image: ubuntu-2204:current # Full virtual machine with Docker pre-installed
+    working_directory: ~/repo
+
+# -------------------------
+# Command to install Trivy scanner locally (without sudo)
+# -------------------------
+commands:
+  install-trivy:
+    steps:
+      - run:
+          name: Install Trivy
+          command: |
+            mkdir -p ~/bin
+            curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b ~/bin
+            echo 'export PATH="$HOME/bin:$PATH"' >> $BASH_ENV
+            source $BASH_ENV
+      - run:
+          name: Verify Trivy
+          command: trivy --version
+
+# -------------------------
+# SonarCloud Job: Static code analysis and quality gate
+# -------------------------
+jobs:
+  sonarcloud-scan:
+    docker:
+      - image: cimg/node:18.20.2 # Lightweight Node image for scanning
+    steps:
+      - checkout
+      - run:
+          name: Install Sonar Scanner Locally
+          command: npm install sonarqube-scanner
+      - run:
+          name: Run SonarCloud Scan
+          command: |
+            npx sonar-scanner \
+              -Dsonar.projectKey=iamanonymous419_mern-chat-app \
+              -Dsonar.organization=iamanonymous419  \
+              -Dsonar.sources=. \
+              -Dsonar.host.url=https://sonarcloud.io \
+              -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/build/** \
+              -Dsonar.login=$SONAR_TOKEN
+
+# -------------------------
+# Job to build, push, and scan the client Docker image
+# -------------------------
+  build-and-push-client:
+    executor: docker-executor
+    parameters:
+      image_tag:
+        type: string
+    steps:
+      - checkout
+
+      # Login to DockerHub using environment variables
+      - run:
+          name: Docker Login
+          command: |
+            echo $DOCKERHUB_PASSWORD | docker login -u $DOCKERHUB_USERNAME --password-stdin
+
+      # Build Docker image for client
+      - run:
+          name: Docker Build (Client)
+          command: |
+            docker build -f ./client/Dockerfile -t $DOCKERHUB_USERNAME/chat-client:<< parameters.image_tag >> ./client
+
+      # Push image with version tag
+      - run:
+          name: Docker Push (Client - build tag)
+          command: |
+            docker push $DOCKERHUB_USERNAME/chat-client:<< parameters.image_tag >>
+
+      # Push image with `latest` tag
+      - run:
+          name: Docker Push (Client - latest)
+          command: |
+            docker tag $DOCKERHUB_USERNAME/chat-client:<< parameters.image_tag >> $DOCKERHUB_USERNAME/chat-client:latest
+            docker push $DOCKERHUB_USERNAME/chat-client:latest
+
+      # Install Trivy scanner
+      - install-trivy
+
+      # Run Trivy security scan on client image
+      - run:
+          name: Trivy Scan (Client Image)
+          command: |
+            mkdir -p trivy-reports
+            trivy image \
+              --severity HIGH,CRITICAL \
+              --format table \
+              --exit-code 0 \
+              --output trivy-reports/trivy-client.txt \
+              $DOCKERHUB_USERNAME/chat-client:<< parameters.image_tag >>
+
+      # Store scan report as CircleCI artifact
+      - store_artifacts:
+          path: trivy-reports/trivy-client.txt
+          destination: trivy-client-report
+
+# -------------------------
+# Job to build, push, and scan the server Docker image
+# -------------------------
+  build-and-push-server:
+    executor: docker-executor
+    parameters:
+      image_tag:
+        type: string
+    steps:
+      - checkout
+
+      # Docker login
+      - run:
+          name: Docker Login
+          command: |
+            echo $DOCKERHUB_PASSWORD | docker login -u $DOCKERHUB_USERNAME --password-stdin
+
+      # Build Docker image for server
+      - run:
+          name: Docker Build (Server)
+          command: |
+            docker build -f ./server/Dockerfile -t $DOCKERHUB_USERNAME/chat-server:<< parameters.image_tag >> ./server
+
+      # Push with build tag
+      - run:
+          name: Docker Push (Server - build tag)
+          command: |
+            docker push $DOCKERHUB_USERNAME/chat-server:<< parameters.image_tag >>
+
+      # Push as latest
+      - run:
+          name: Docker Push (Server - latest)
+          command: |
+            docker tag $DOCKERHUB_USERNAME/chat-server:<< parameters.image_tag >> $DOCKERHUB_USERNAME/chat-server:latest
+            docker push $DOCKERHUB_USERNAME/chat-server:latest
+
+      # Install Trivy
+      - install-trivy
+
+      # Scan server image
+      - run:
+          name: Trivy Scan (Server Image)
+          command: |
+            mkdir -p trivy-reports
+            trivy image \
+              --severity HIGH,CRITICAL \
+              --format table \
+              --exit-code 0 \
+              --output trivy-reports/trivy-server.txt \
+              $DOCKERHUB_USERNAME/chat-server:<< parameters.image_tag >>
+
+      # Save scan as artifact
+      - store_artifacts:
+          path: trivy-reports/trivy-server.txt
+          destination: trivy-server-report
+
+# -------------------------
+# Global parameter: image tag for docker builds
+# -------------------------
+parameters:
+  image_tag:
+    type: string
+    default: build-<< pipeline.number >>
+
+# -------------------------
+# Workflow: Order of jobs
+# -------------------------
+workflows:
+  build-and-deploy:
+    jobs:
+      - sonarcloud-scan
+      - build-and-push-client:
+          image_tag: build-<< pipeline.number >>
+          requires:
+            - sonarcloud-scan
+      - build-and-push-server:
+          image_tag: build-<< pipeline.number >>
+          requires:
+            - sonarcloud-scan

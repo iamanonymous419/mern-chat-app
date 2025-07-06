@@ -15,8 +15,6 @@ services:
       PORT: 3000
       CLIENT_URL: http://localhost:4173  
       JWT_SECRET: YWpka2ZhamtmamRrYUAhIyFAIyFAI0AhNDMyNDIzNDIhJEAjamFrZmhkYWpmaGFqZGgzNDg5NDgwMzQ4MjMkISQjISRmCg==
-    volumes:
-      - ../server:/app
     command: pnpm run start
     restart: always
     networks:

@@ -14,8 +14,6 @@ services:
       MONGODB_URI: mongodb://root:rootpassword@database:27017/chatapp?authSource=admin&retryWrites=true&w=majority
       PORT: 3000
       JWT_SECRET: YWpka2ZhamtmamRrYUAhIyFAIyFAI0AhNDMyNDIzNDIhJEAjamFrZmhkYWpmaGFqZGgzNDg5NDgwMzQ4MjMkISQjISRmCg==
-    volumes:
-      - .:/app
     command: pnpm run start
     restart: always
     networks:
